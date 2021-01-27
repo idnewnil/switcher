@@ -100,5 +100,5 @@ fabric.properties
 # test file
 src/main/java/MainTest.java
 
-.gradle
-build
+.gradle/
+build/

@@ -12,9 +12,16 @@ public class ConnectionDetail {
     final InetSocketAddress proxySocket;
 
     /**
-     * @param proxySocket 上游代理的地址
+     * 服务端uri
      */
-    ConnectionDetail(InetSocketAddress proxySocket) {
+    final String uri;
+
+    /**
+     * @param proxySocket 上游代理的地址
+     * @param uri         目标uri
+     */
+    ConnectionDetail(InetSocketAddress proxySocket, String uri) {
         this.proxySocket = proxySocket;
+        this.uri = uri;
     }
 }

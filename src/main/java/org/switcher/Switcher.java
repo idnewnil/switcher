@@ -1,17 +1,19 @@
 package org.switcher;
 
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpRequest;
 import org.littleshoot.proxy.*;
 import org.littleshoot.proxy.impl.ClientDetails;
 import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.switcher.exception.ConnectionAlreadySetupException;
 import org.switcher.exception.ConnectionNotFoundException;
 
 import javax.net.ssl.SSLSession;
 import java.net.InetSocketAddress;
 import java.util.*;
+
+import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
 
 /**
  * 负载均衡器，能根据上游代理的拥挤程度自动的分配代理给连接
@@ -35,6 +37,8 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      */
     public final ConnectionManager connectionManager;
 
+    public final Tabu tabu;
+
     /**
      * 选择策略
      */
@@ -47,6 +51,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     public Switcher(Comparator<UpstreamProxyDetail> switchTactics) {
         upstreamProxyManager = new UpstreamProxyManager(this);
         connectionManager = new ConnectionManager(this);
+        tabu = new Tabu(this);
         setSwitchTactics(switchTactics);
     }
 
@@ -60,7 +65,18 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     public HttpProxyServerBootstrap boostrap() {
         return DefaultHttpProxyServer.bootstrap()
                 .plusActivityTracker(this)
-                .withChainProxyManager(this);
+                .withChainProxyManager(this)
+                .withFiltersSource(new HttpFiltersSourceAdapter() {
+                    @Override
+                    public HttpFilters filterRequest(HttpRequest originalRequest) {
+                        return new SwitcherHttpFilter(Switcher.this, originalRequest);
+                    }
+
+                    @Override
+                    public HttpFilters filterRequest(HttpRequest originalRequest, ChannelHandlerContext ctx) {
+                        return new SwitcherHttpFilter(Switcher.this, originalRequest, ctx);
+                    }
+                });
     }
 
     /**
@@ -80,7 +96,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
             logger.info("客户端 {} 断开连接", clientAddress);
             connectionManager.remove(clientAddress);
         } catch (ConnectionNotFoundException e) {
-            logger.debug("", e);
+            logger.debug(UNEXPECTED_EXCEPTION, e);
         }
     }
 
@@ -93,10 +109,10 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      * @return {@link ChainedProxy}
      */
     private ChainedProxy makeChainedProxy(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
-        SwitcherChainedProxy switcherChainedProxy = new SwitcherChainedProxy(clientSocket, proxySocket, uri);
+        SwitcherChainedProxy switcherChainedProxy = new SwitcherChainedProxy(this, clientSocket, proxySocket, uri);
         if (proxySocket == UpstreamProxyManager.DIRECT_CONNECTION) {
             // 如果是直连，那么手动调用switcherChainedProxy的connectionSucceeded函数，然后返回FALLBACK_TO_DIRECT_CONNECTION
-            switcherChainedProxy.connectionSucceeded();
+//            switcherChainedProxy.connectionSucceeded();
             return ChainedProxyAdapter.FALLBACK_TO_DIRECT_CONNECTION;
         } else {
             return switcherChainedProxy;
@@ -127,52 +143,6 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
             // 来自局域网其它主机的连接，只能使用直连
             chainedProxies.add(makeChainedProxy(clientDetails.getClientAddress(),
                     UpstreamProxyManager.DIRECT_CONNECTION, httpRequest.uri()));
-        }
-    }
-
-    /**
-     * 在原本的 {@link ChainedProxyAdapter} 基础上增加了记录连接信息的功能
-     */
-    private class SwitcherChainedProxy extends ChainedProxyAdapter {
-        private final InetSocketAddress clientSocket;
-        private final InetSocketAddress proxySocket;
-        private final String uri;
-
-        private SwitcherChainedProxy(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
-            this.clientSocket = clientSocket;
-            this.proxySocket = proxySocket;
-            this.uri = uri;
-        }
-
-        /**
-         * @return 上游代理的socket
-         */
-        @Override
-        public InetSocketAddress getChainedProxyAddress() {
-            return proxySocket;
-        }
-
-        /**
-         * 连接通过上游代理连接成功后，记录一些必要的信息
-         */
-        @Override
-        public void connectionSucceeded() {
-            try {
-                connectionManager.add(clientSocket, proxySocket, uri);
-                upstreamProxyManager.proxies.get(proxySocket).relevantConnections.add(clientSocket);
-            } catch (ConnectionAlreadySetupException e) {
-                logger.debug("", e);
-            }
-        }
-
-        /**
-         * 连接出错时的处理
-         *
-         * @param cause 出错原因
-         */
-        @Override
-        public void connectionFailed(Throwable cause) {
-            logger.debug("建立{}失败", ConnectionManager.connectionChain(clientSocket, proxySocket, uri), cause);
         }
     }
 }

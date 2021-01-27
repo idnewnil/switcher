@@ -22,7 +22,7 @@ public class ConnectionManager {
     /**
      * 连接映射，方便通过 {@link InetSocketAddress} 来查找其详细信息
      */
-    private final Map<InetSocketAddress, ConnectionDetail> connections;
+    final Map<InetSocketAddress, ConnectionDetail> connections;
 
     private final Switcher switcher;
 
@@ -59,31 +59,31 @@ public class ConnectionManager {
 
         // 由于upstreamProxy可能在被获取后又恰好被释放，因此需要获取状态锁
         upstreamProxyDetail.stateLock.readLock().lock();
+        // 用AtomicBoolean并不是为了原子性，可以用new boolean[]{true}来代替
+        AtomicBoolean contains = new AtomicBoolean(true);
+
+        // 需要原子性操作，不能换为containsKey+put
+        ConnectionDetail connectionDetail = connections.computeIfAbsent(clientSocket, __ -> {
+            // 此处如果修改boolean则会报错，所以才需要用引用的方式
+            contains.set(false);
+            return new ConnectionDetail(proxySocket, uri);
+        });
+
+        // 判断是否已经存在该键，如果存在则输出日志并抛出错误，否则打印一条info
+        if (contains.get()) {
+            String newConnectionChain = connectionChain(clientSocket, proxySocket, uri);
+            String existingConnectionChain = connectionChain(clientSocket,
+                    connectionDetail.proxySocket, connectionDetail.uri);
+            logger.error("尝试增加{}到 {}，但在 {} 中，已存在{}",
+                    newConnectionChain, this, this, existingConnectionChain);
+            throw new ConnectionAlreadySetupException(connectionDetail);
+        } else {
+            logger.info("新增{}", connectionChain(clientSocket, proxySocket, uri));
+        }
+
         if (upstreamProxyDetail.removed) {
             // 如果upstreamProxy恰好被移除了，那么需要中止这一个连接
-            // TODO 中止连接
-        } else {
-            // 用AtomicBoolean并不是为了原子性，可以用new boolean[]{true}来代替
-            AtomicBoolean contains = new AtomicBoolean(true);
-
-            // 需要原子性操作，不能换为containsKey+put
-            ConnectionDetail connectionDetail = connections.computeIfAbsent(clientSocket, __ -> {
-                // 此处如果修改boolean则会报错
-                contains.set(false);
-                return new ConnectionDetail(proxySocket, uri);
-            });
-
-            // 判断是否已经存在该键，如果存在则输出日志并抛出错误，否则打印一条info
-            if (contains.get()) {
-                String newConnectionChain = connectionChain(clientSocket, proxySocket, uri);
-                String existingConnectionChain = connectionChain(clientSocket,
-                        connectionDetail.proxySocket, connectionDetail.uri);
-                logger.error("尝试增加{}到 {}，但在 {} 中，已存在{}",
-                        newConnectionChain, this, this, existingConnectionChain);
-                throw new ConnectionAlreadySetupException(connectionDetail);
-            } else {
-                logger.info("新增{}", connectionChain(clientSocket, proxySocket, uri));
-            }
+            connectionDetail.abort = true;
         }
         // 释放锁
         upstreamProxyDetail.stateLock.readLock().unlock();
@@ -115,20 +115,18 @@ public class ConnectionManager {
     }
 
     /**
-     * 移除连接（成功状态）
+     * 移除连接（断开连接时进行处理）
      *
      * @param clientSocket 客户端的socket
-     * @return 连接的详细信息
      * @throws ConnectionNotFoundException 如果连接不存在，则抛出该异常
      */
-    ConnectionDetail remove(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
+    void remove(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
         ConnectionDetail connectionDetail = connections.remove(clientSocket);
         if (connectionDetail == null) {
             logger.debug("移除不存在的连接 {}", clientSocket);
             throw new ConnectionNotFoundException();
         }
         logger.info("移除连接 {}", clientSocket);
-        return connectionDetail;
     }
 
     /**
@@ -139,9 +137,7 @@ public class ConnectionManager {
      */
     public void abort(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
         logger.info("中止连接 {}", clientSocket);
-        ConnectionDetail connectionDetail = remove(clientSocket);
-        // TODO 从switcher.upstreamProxyManager.getDetail(connectionDetail.proxySocket).relevantConnections
-        //  移除clientSocket
-        // TODO 中止连接
+        ConnectionDetail connectionDetail = getDetail(clientSocket);
+        connectionDetail.abort = true;
     }
 }

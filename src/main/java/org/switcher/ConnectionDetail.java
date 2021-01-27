@@ -17,11 +17,17 @@ public class ConnectionDetail {
     final String uri;
 
     /**
+     * 连接是否被中止
+     */
+    boolean abort;
+
+    /**
      * @param proxySocket 上游代理的地址
      * @param uri         目标uri
      */
     ConnectionDetail(InetSocketAddress proxySocket, String uri) {
         this.proxySocket = proxySocket;
         this.uri = uri;
+        abort = false;
     }
 }

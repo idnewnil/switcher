@@ -13,8 +13,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
+
 public class UpstreamProxyManager {
     private final static Logger logger = LoggerFactory.getLogger(UpstreamProxyManager.class);
+
     /**
      * 不使用上游代理，直接连接
      */
@@ -33,7 +36,7 @@ public class UpstreamProxyManager {
     /**
      * @param switcher {@link Switcher}
      */
-    public UpstreamProxyManager(Switcher switcher) {
+    UpstreamProxyManager(Switcher switcher) {
         this.switcher = switcher;
         proxies = new ConcurrentHashMap<>();
         proxies.put(DIRECT_CONNECTION, new UpstreamProxyDetail());
@@ -66,7 +69,7 @@ public class UpstreamProxyManager {
         });
 
         if (contains.get()) {
-            logger.debug("上游代理 {} 已存在", proxySocket);
+            logger.info("上游代理 {} 已存在", proxySocket);
             throw new UpStreamProxyAlreadyExistsException(upstreamProxyDetail);
         }
     }
@@ -81,14 +84,6 @@ public class UpstreamProxyManager {
     }
 
     /**
-     * @param proxySocket 上游代理socket
-     * @return 是否存在上游代理
-     */
-    public boolean contains(InetSocketAddress proxySocket) {
-        return proxies.containsKey(proxySocket);
-    }
-
-    /**
      * 获取上游代理详细信息
      *
      * @param proxySocket 上游代理socket
@@ -98,7 +93,7 @@ public class UpstreamProxyManager {
     public UpstreamProxyDetail getDetail(InetSocketAddress proxySocket) throws UpStreamProxyNotFoundException {
         UpstreamProxyDetail value = proxies.get(proxySocket);
         if (value == null) {
-            logger.debug("获取不存在上游代理 {} 的信息", proxySocket);
+            logger.info("获取不存在上游代理 {} 的信息", proxySocket);
             throw new UpStreamProxyNotFoundException();
         }
         return value;
@@ -113,7 +108,7 @@ public class UpstreamProxyManager {
     public UpstreamProxyDetail remove(InetSocketAddress proxySocket) throws UpStreamProxyNotFoundException {
         UpstreamProxyDetail upstreamProxyDetail = proxies.remove(proxySocket);
         if (upstreamProxyDetail == null) {
-            logger.debug("移除不存在的上游代理 {} ", proxySocket);
+            logger.info("移除不存在的上游代理 {} ", proxySocket);
             throw new UpStreamProxyNotFoundException();
         }
         // 修改状态，防止产生野连接
@@ -125,7 +120,7 @@ public class UpstreamProxyManager {
             try {
                 switcher.connectionManager.abort(inetSocketAddress);
             } catch (ConnectionNotFoundException e) {
-                logger.debug("", e);
+                logger.debug(UNEXPECTED_EXCEPTION, e);
             }
         });
         return upstreamProxyDetail;

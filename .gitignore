@@ -102,3 +102,7 @@ src/main/java/MainTest.java
 
 .gradle/
 build/
+
+# generated file
+littleproxy_cert
+littleproxy_keystore.jks

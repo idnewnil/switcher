@@ -13,6 +13,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
+
 /**
  * 管理连接，根据给定的socket，能返回其详细信息
  */
@@ -39,9 +41,18 @@ public class ConnectionManager {
      * @param uri          目标uri
      * @return 格式化后的代理链
      */
-    static String connectionChain(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
+    private static String connectionChain(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
         String proxyType = proxySocket == UpstreamProxyManager.DIRECT_CONNECTION ? "直接连接" : "代理连接";
         return MessageFormat.format("{0} {1} == {2} => {3} ", proxyType, clientSocket, proxySocket, uri);
+    }
+
+    ConnectionDetail sureAdd(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
+        try {
+            return add(clientSocket, proxySocket, uri);
+        } catch (ConnectionAlreadySetupException e) {
+            logger.debug(UNEXPECTED_EXCEPTION, e);
+            return null;
+        }
     }
 
     /**
@@ -52,13 +63,13 @@ public class ConnectionManager {
      * @param uri          目标uri
      * @throws ConnectionAlreadySetupException 如果连接已存在，则会抛出该错误
      */
-    void add(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) throws ConnectionAlreadySetupException {
-        // 断言存在该代理
-        UpstreamProxyDetail upstreamProxyDetail = switcher.upstreamProxyManager.proxies.get(proxySocket);
-        assert upstreamProxyDetail != null;
+    ConnectionDetail add(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) throws ConnectionAlreadySetupException {
+        UpstreamProxyDetail upstreamProxyDetail = switcher.upstreamProxyManager.sureGetDetail(proxySocket);
+        if (upstreamProxyDetail != null) {
+            // 由于upstreamProxy可能在被获取后又恰好被释放，因此需要获取状态锁
+            upstreamProxyDetail.stateLock.readLock().lock();
+        }
 
-        // 由于upstreamProxy可能在被获取后又恰好被释放，因此需要获取状态锁
-        upstreamProxyDetail.stateLock.readLock().lock();
         // 用AtomicBoolean并不是为了原子性，可以用new boolean[]{true}来代替
         AtomicBoolean contains = new AtomicBoolean(true);
 
@@ -68,6 +79,20 @@ public class ConnectionManager {
             contains.set(false);
             return new ConnectionDetail(proxySocket, uri);
         });
+
+        if (upstreamProxyDetail != null) {
+            if (!contains.get()) {
+                upstreamProxyDetail.relevantConnections.add(clientSocket);
+            }
+            if (upstreamProxyDetail.removed) {
+                // 如果upstreamProxy恰好被移除了，那么需要中止这一个连接
+                connectionDetail.abort = true;
+            }
+            // 释放锁
+            upstreamProxyDetail.stateLock.readLock().unlock();
+        } else {
+            connectionDetail.abort = true;
+        }
 
         // 判断是否已经存在该键，如果存在则输出日志并抛出错误，否则打印一条info
         if (contains.get()) {
@@ -80,13 +105,7 @@ public class ConnectionManager {
         } else {
             logger.info("新增{}", connectionChain(clientSocket, proxySocket, uri));
         }
-
-        if (upstreamProxyDetail.removed) {
-            // 如果upstreamProxy恰好被移除了，那么需要中止这一个连接
-            connectionDetail.abort = true;
-        }
-        // 释放锁
-        upstreamProxyDetail.stateLock.readLock().unlock();
+        return connectionDetail;
     }
 
     /**
@@ -96,6 +115,15 @@ public class ConnectionManager {
      */
     public Set<InetSocketAddress> getAll() {
         return new HashSet<>(connections.keySet());
+    }
+
+    ConnectionDetail sureGetDetail(InetSocketAddress clientSocket) {
+        try {
+            return getDetail(clientSocket);
+        } catch (ConnectionNotFoundException e) {
+            logger.debug(UNEXPECTED_EXCEPTION, e);
+            return null;
+        }
     }
 
     /**
@@ -118,15 +146,22 @@ public class ConnectionManager {
      * 移除连接（断开连接时进行处理）
      *
      * @param clientSocket 客户端的socket
-     * @throws ConnectionNotFoundException 如果连接不存在，则抛出该异常
      */
-    void remove(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
+    void remove(InetSocketAddress clientSocket) {
         ConnectionDetail connectionDetail = connections.remove(clientSocket);
         if (connectionDetail == null) {
-            logger.debug("移除不存在的连接 {}", clientSocket);
-            throw new ConnectionNotFoundException();
+            ConnectionNotFoundException e = new ConnectionNotFoundException();
+            logger.debug(UNEXPECTED_EXCEPTION, e);
         }
         logger.info("移除连接 {}", clientSocket);
+    }
+
+    void sureAbort(InetSocketAddress clientSocket) {
+        try {
+            abort(clientSocket);
+        } catch (ConnectionNotFoundException e) {
+            logger.debug(UNEXPECTED_EXCEPTION, e);
+        }
     }
 
     /**

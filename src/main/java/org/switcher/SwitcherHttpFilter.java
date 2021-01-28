@@ -3,7 +3,6 @@ package org.switcher;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpObject;
 import io.netty.handler.codec.http.HttpRequest;
-import io.netty.handler.codec.http.HttpResponse;
 import org.littleshoot.proxy.HttpFiltersAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +14,18 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
 
     private final Switcher switcher;
 
+    private static InetSocketAddress toSocket(String socketString) {
+        String[] result = socketString.split(":");
+        if (result.length == 1) {
+            return new InetSocketAddress(result[0], 80);
+        } else if (result.length == 2) {
+            return new InetSocketAddress(result[0], Integer.parseInt(result[1]));
+        } else {
+            logger.debug("非法的socket字符串");
+            return null;
+        }
+    }
+
     public SwitcherHttpFilter(Switcher switcher, HttpRequest originalRequest, ChannelHandlerContext ctx) {
         super(originalRequest, ctx);
         this.switcher = switcher;
@@ -25,88 +36,40 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
         this.switcher = switcher;
     }
 
-    @Override
-    public HttpResponse clientToProxyRequest(HttpObject httpObject) {
-        return null;
+    private ConnectionDetail getConnectionDetail() {
+        InetSocketAddress clientSocket = (InetSocketAddress) ctx.channel().remoteAddress();
+        return switcher.connectionManager.sureGetDetail(clientSocket);
     }
 
-    @Override
-    public HttpResponse proxyToServerRequest(HttpObject httpObject) {
-        return super.proxyToServerRequest(httpObject);
-    }
-
-    @Override
-    public void proxyToServerRequestSending() {
-        super.proxyToServerRequestSending();
-    }
-
-    @Override
-    public void proxyToServerRequestSent() {
-        super.proxyToServerRequestSent();
+    private boolean isAbort() {
+        ConnectionDetail connectionDetail = getConnectionDetail();
+        return connectionDetail == null || connectionDetail.abort;
     }
 
     @Override
     public HttpObject serverToProxyResponse(HttpObject httpObject) {
-        return super.serverToProxyResponse(httpObject);
-    }
-
-    @Override
-    public void serverToProxyResponseTimedOut() {
-        super.serverToProxyResponseTimedOut();
-    }
-
-    @Override
-    public void serverToProxyResponseReceiving() {
-        super.serverToProxyResponseReceiving();
-    }
-
-    @Override
-    public void serverToProxyResponseReceived() {
-        super.serverToProxyResponseReceived();
+        return isAbort() ? null : httpObject;
     }
 
     @Override
     public HttpObject proxyToClientResponse(HttpObject httpObject) {
-        return super.proxyToClientResponse(httpObject);
-    }
-
-    @Override
-    public void proxyToServerConnectionQueued() {
-        super.proxyToServerConnectionQueued();
-    }
-
-    @Override
-    public InetSocketAddress proxyToServerResolutionStarted(String resolvingServerHostAndPort) {
-        return super.proxyToServerResolutionStarted(resolvingServerHostAndPort);
-    }
-
-    @Override
-    public void proxyToServerResolutionFailed(String hostAndPort) {
-        super.proxyToServerResolutionFailed(hostAndPort);
-    }
-
-    @Override
-    public void proxyToServerResolutionSucceeded(String serverHostAndPort, InetSocketAddress resolvedRemoteAddress) {
-        super.proxyToServerResolutionSucceeded(serverHostAndPort, resolvedRemoteAddress);
-    }
-
-    @Override
-    public void proxyToServerConnectionStarted() {
-        super.proxyToServerConnectionStarted();
-    }
-
-    @Override
-    public void proxyToServerConnectionSSLHandshakeStarted() {
-        super.proxyToServerConnectionSSLHandshakeStarted();
+        return isAbort() ? null : httpObject;
     }
 
     @Override
     public void proxyToServerConnectionSucceeded(ChannelHandlerContext serverCtx) {
-        super.proxyToServerConnectionSucceeded(serverCtx);
+        InetSocketAddress clientSocket = (InetSocketAddress) ctx.channel().remoteAddress();
+        InetSocketAddress proxySocket = (InetSocketAddress) serverCtx.channel().remoteAddress();
+        String uri = originalRequest.uri();
+        if (proxySocket.equals(toSocket(uri))) {
+            // 如果上游代理的socket和目标服务器的socket一致，说明是直接连接
+            proxySocket = UpstreamProxyManager.DIRECT_CONNECTION;
+        }
+        switcher.connectionManager.sureAdd(clientSocket, proxySocket, uri);
     }
 
     @Override
     public void proxyToServerConnectionFailed() {
-        logger.info("建立到服务器 {} 的连接失败", originalRequest.uri());
+        logger.info("尝试建立到 {} 的连接失败", originalRequest.uri());
     }
 }

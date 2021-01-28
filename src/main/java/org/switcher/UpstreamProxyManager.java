@@ -2,7 +2,6 @@ package org.switcher;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.switcher.exception.ConnectionNotFoundException;
 import org.switcher.exception.UpStreamProxyAlreadyExistsException;
 import org.switcher.exception.UpStreamProxyNotFoundException;
 
@@ -49,8 +48,8 @@ public class UpstreamProxyManager {
      * @param port 端口
      * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public void add(String host, int port) throws UpStreamProxyAlreadyExistsException {
-        add(new InetSocketAddress(host, port));
+    public UpstreamProxyDetail add(String host, int port) throws UpStreamProxyAlreadyExistsException {
+        return add(new InetSocketAddress(host, port));
     }
 
     /**
@@ -59,7 +58,7 @@ public class UpstreamProxyManager {
      * @param proxySocket 上游代理socket
      * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public void add(InetSocketAddress proxySocket) throws UpStreamProxyAlreadyExistsException {
+    public UpstreamProxyDetail add(InetSocketAddress proxySocket) throws UpStreamProxyAlreadyExistsException {
         AtomicBoolean contains = new AtomicBoolean(true);
 
         // 需要原子性操作，不能换为containsKey+put
@@ -72,6 +71,7 @@ public class UpstreamProxyManager {
             logger.info("上游代理 {} 已存在", proxySocket);
             throw new UpStreamProxyAlreadyExistsException(upstreamProxyDetail);
         }
+        return upstreamProxyDetail;
     }
 
     /**
@@ -81,6 +81,15 @@ public class UpstreamProxyManager {
      */
     public Set<InetSocketAddress> getAll() {
         return new HashSet<>(proxies.keySet());
+    }
+
+    UpstreamProxyDetail sureGetDetail(InetSocketAddress proxySocket) {
+        try {
+            return getDetail(proxySocket);
+        } catch (UpStreamProxyNotFoundException e) {
+            logger.debug(UNEXPECTED_EXCEPTION, e);
+            return null;
+        }
     }
 
     /**
@@ -116,13 +125,7 @@ public class UpstreamProxyManager {
         upstreamProxyDetail.removed = true;
         upstreamProxyDetail.stateLock.writeLock().unlock();
         // 中止和该代理相关的所有连接
-        new HashSet<>(upstreamProxyDetail.relevantConnections).forEach(inetSocketAddress -> {
-            try {
-                switcher.connectionManager.abort(inetSocketAddress);
-            } catch (ConnectionNotFoundException e) {
-                logger.debug(UNEXPECTED_EXCEPTION, e);
-            }
-        });
+        upstreamProxyDetail.relevantConnections.forEach(switcher.connectionManager::sureAbort);
         return upstreamProxyDetail;
     }
 }

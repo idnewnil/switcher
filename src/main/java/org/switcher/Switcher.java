@@ -7,13 +7,10 @@ import org.littleshoot.proxy.impl.ClientDetails;
 import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.switcher.exception.ConnectionNotFoundException;
 
 import javax.net.ssl.SSLSession;
 import java.net.InetSocketAddress;
 import java.util.*;
-
-import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
 
 /**
  * 负载均衡器，能根据上游代理的拥挤程度自动的分配代理给连接
@@ -92,30 +89,27 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
 
     @Override
     public void clientDisconnected(InetSocketAddress clientAddress, SSLSession sslSession) {
-        try {
-            logger.info("客户端 {} 断开连接", clientAddress);
-            connectionManager.remove(clientAddress);
-        } catch (ConnectionNotFoundException e) {
-            logger.debug(UNEXPECTED_EXCEPTION, e);
-        }
+        logger.info("客户端 {} 断开连接", clientAddress);
+        connectionManager.remove(clientAddress);
     }
 
     /**
-     * 创建 {@link ChainedProxy}
+     * 根据proxySocket创建 {@link ChainedProxy}，如果proxySocket是 {@link UpstreamProxyManager#DIRECT_CONNECTION}
+     * 那么会返回 {@link ChainedProxyAdapter#FALLBACK_TO_DIRECT_CONNECTION}
      *
-     * @param clientSocket 客户端的socket
-     * @param proxySocket  上游代理的socket
-     * @param uri          目标uri
+     * @param proxySocket 上游代理的socket
      * @return {@link ChainedProxy}
      */
-    private ChainedProxy makeChainedProxy(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
-        SwitcherChainedProxy switcherChainedProxy = new SwitcherChainedProxy(this, clientSocket, proxySocket, uri);
+    private ChainedProxy makeChainedProxy(InetSocketAddress proxySocket) {
         if (proxySocket == UpstreamProxyManager.DIRECT_CONNECTION) {
-            // 如果是直连，那么手动调用switcherChainedProxy的connectionSucceeded函数，然后返回FALLBACK_TO_DIRECT_CONNECTION
-//            switcherChainedProxy.connectionSucceeded();
             return ChainedProxyAdapter.FALLBACK_TO_DIRECT_CONNECTION;
         } else {
-            return switcherChainedProxy;
+            return new ChainedProxyAdapter() {
+                @Override
+                public InetSocketAddress getChainedProxyAddress() {
+                    return proxySocket;
+                }
+            };
         }
     }
 
@@ -137,12 +131,10 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
                     new ArrayList<>(upstreamProxyManager.proxies.entrySet());
             proxyList.sort((o1, o2) -> switchTactics.compare(o1.getValue(), o2.getValue()));
             // 排序后，将代理地址按顺序加入代理链
-            proxyList.forEach(entry -> chainedProxies.add(makeChainedProxy(clientDetails.getClientAddress(),
-                    entry.getKey(), httpRequest.uri())));
+            proxyList.forEach(entry -> chainedProxies.add(makeChainedProxy(entry.getKey())));
         } else {
             // 来自局域网其它主机的连接，只能使用直连
-            chainedProxies.add(makeChainedProxy(clientDetails.getClientAddress(),
-                    UpstreamProxyManager.DIRECT_CONNECTION, httpRequest.uri()));
+            chainedProxies.add(makeChainedProxy(UpstreamProxyManager.DIRECT_CONNECTION));
         }
     }
 }

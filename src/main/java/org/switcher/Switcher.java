@@ -3,6 +3,7 @@ package org.switcher;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.HttpRequest;
 import org.littleshoot.proxy.*;
+import org.littleshoot.proxy.extras.SelfSignedMitmManager;
 import org.littleshoot.proxy.impl.ClientDetails;
 import org.littleshoot.proxy.impl.DefaultHttpProxyServer;
 import org.slf4j.Logger;
@@ -69,6 +70,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
                 .withPort(12234)
                 .plusActivityTracker(this)
                 .withChainProxyManager(this)
+                .withManInTheMiddle(new SelfSignedMitmManager())
                 .withFiltersSource(new HttpFiltersSourceAdapter() {
                     @Override
                     public HttpFilters filterRequest(HttpRequest originalRequest) {

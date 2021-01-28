@@ -1,5 +1,7 @@
 package org.switcher;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public class SpeedRecorder {
@@ -11,7 +13,7 @@ public class SpeedRecorder {
     private AtomicReferenceArray<SpeedRecord> periodSpeedRecords;
 
     SpeedRecorder() {
-        this(10);
+        this(100);
     }
 
     SpeedRecorder(int numberOfPeriods) {
@@ -42,8 +44,8 @@ public class SpeedRecorder {
      * @param numberOfBytes 字节数
      */
     public void record(int numberOfBytes) {
-        Holder holder = new Holder();
-        holder.periodSpeedRecords.updateAndGet(holder.pos, speedRecord -> {
+        Holder holder = new Holder(false);
+        holder.concurrentPeriodSpeedRecords.updateAndGet(holder.pos, speedRecord -> {
             if (holder.timestamp > speedRecord.timestamp) {
                 // 如果目前的时间比当前speedRecord的时间要大，那么需要更新speedRecord的值
                 return new SpeedRecord(holder.timestamp, numberOfBytes);
@@ -63,33 +65,41 @@ public class SpeedRecorder {
      * 不要使用this.periodSpeedRecords，因为setPeriodCount可能会使其发生变化
      */
     public long getSpeed() {
-        Holder holder = new Holder();
+        Holder holder = new Holder(true);
         long totalValue = 0;
-        int validCount = 0;
-        for (int i = 0; i < holder.periodSpeedRecords.length(); i++) {
+        for (int i = 0; i < holder.periodSpeedRecords.size(); i++) {
             int delta = i <= holder.pos ? 0 : 1;
             SpeedRecord speedRecord = holder.periodSpeedRecords.get(i);
             if (holder.timestamp - speedRecord.timestamp == delta) {
                 // 对于每一个位置i<=holder.pos，如果holder.timestamp==speedRecord.timestamp，说明这个位置的记录是最新的
                 // 同样对于每一个i>holder.pos且holder.timestamp-speedRecord.timestamp==1的位置，这个记录也是最新的
                 totalValue += speedRecord.value;
-                validCount += 1;
             }
         }
-        return validCount == 0 ? 0 : totalValue / validCount;
+        return totalValue;
     }
 
 
     private class Holder {
-        private final AtomicReferenceArray<SpeedRecord> periodSpeedRecords;
+        private final AtomicReferenceArray<SpeedRecord> concurrentPeriodSpeedRecords;
+        private final List<SpeedRecord> periodSpeedRecords;
         private final long timestamp;
         private final int pos;
 
-        private Holder() {
+        private Holder(boolean freeze) {
             // 保证periodSpeedRecords的一致性
-            periodSpeedRecords = SpeedRecorder.this.periodSpeedRecords;
-            int periodLong = NANO / periodSpeedRecords.length();
+            concurrentPeriodSpeedRecords = SpeedRecorder.this.periodSpeedRecords;
+            int numberOfPeriods = concurrentPeriodSpeedRecords.length();
+            if (freeze) {
+                periodSpeedRecords = new ArrayList<>(numberOfPeriods);
+                for (int i = 0; i < numberOfPeriods; i++) {
+                    periodSpeedRecords.add(concurrentPeriodSpeedRecords.get(i).clone());
+                }
+            } else {
+                periodSpeedRecords = null;
+            }
             long nano = System.nanoTime();
+            int periodLong = (NANO + numberOfPeriods - 1) / numberOfPeriods;
             timestamp = nano / NANO;
             pos = (int) (nano % NANO / periodLong);
         }

@@ -38,7 +38,7 @@ public class UpstreamProxyManager {
     UpstreamProxyManager(Switcher switcher) {
         this.switcher = switcher;
         proxies = new ConcurrentHashMap<>();
-        proxies.put(DIRECT_CONNECTION, new UpstreamProxyDetail());
+        add(DIRECT_CONNECTION);
     }
 
     /**
@@ -46,9 +46,8 @@ public class UpstreamProxyManager {
      *
      * @param host 主机
      * @param port 端口
-     * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public void add(String host, int port) throws UpStreamProxyAlreadyExistsException {
+    public void add(String host, int port) {
         add(new InetSocketAddress(host, port));
     }
 
@@ -120,9 +119,6 @@ public class UpstreamProxyManager {
             upstreamProxyDetail.stateLock.writeLock().unlock();
             // 中止和该代理相关的所有连接
             upstreamProxyDetail.relevantConnections.forEach(switcher.connectionManager::sureAbort);
-        }
-        if (proxySocket == DIRECT_CONNECTION) {
-            sureAdd(DIRECT_CONNECTION);
         }
         return upstreamProxyDetail;
     }

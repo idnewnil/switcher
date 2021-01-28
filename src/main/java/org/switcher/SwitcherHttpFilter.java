@@ -53,17 +53,12 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
 
     @Override
     public HttpObject serverToProxyResponse(HttpObject httpObject) {
-        return httpObject;//isAbort() ? null : httpObject;
-    }
-
-    @Override
-    public void proxyToServerConnectionSSLHandshakeStarted() {
-        super.proxyToServerConnectionSSLHandshakeStarted();
+        return isAbort() ? null : httpObject;
     }
 
     @Override
     public HttpObject proxyToClientResponse(HttpObject httpObject) {
-        return httpObject;//isAbort() ? null : httpObject;
+        return isAbort() ? null : httpObject;
     }
 
     @Override
@@ -71,7 +66,6 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
         InetSocketAddress clientSocket = (InetSocketAddress) ctx.channel().remoteAddress();
         InetSocketAddress proxySocket = (InetSocketAddress) serverCtx.channel().remoteAddress();
         String uri = originalRequest.uri();
-        System.out.println(uri);
         if (proxySocket.equals(toSocket(uri))) {
             // 如果上游代理的socket和目标服务器的socket一致，说明是直接连接
             proxySocket = UpstreamProxyManager.DIRECT_CONNECTION;

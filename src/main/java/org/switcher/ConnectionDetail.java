@@ -9,12 +9,14 @@ public class ConnectionDetail {
     /**
      * 此连接所对应的上游代理的socket
      */
-    final InetSocketAddress proxySocket;
+    public final InetSocketAddress proxySocket;
 
     /**
      * 服务端uri
      */
-    final String uri;
+    public final String uri;
+
+    public final SpeedRecorder speedRecorder;
 
     /**
      * 连接是否被中止
@@ -28,6 +30,11 @@ public class ConnectionDetail {
     ConnectionDetail(InetSocketAddress proxySocket, String uri) {
         this.proxySocket = proxySocket;
         this.uri = uri;
+        speedRecorder = new SpeedRecorder();
         abort = false;
+    }
+
+    public boolean isAbort() {
+        return abort;
     }
 }

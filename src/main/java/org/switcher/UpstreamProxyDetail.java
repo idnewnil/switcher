@@ -15,6 +15,8 @@ public class UpstreamProxyDetail {
      */
     final Set<InetSocketAddress> relevantConnections;
 
+    final SpeedRecorder speedRecorder;
+
     /**
      * 执行和状态相关的操作时需要该锁
      */
@@ -27,6 +29,7 @@ public class UpstreamProxyDetail {
 
     UpstreamProxyDetail() {
         relevantConnections = new HashSet<>();
+        speedRecorder = new SpeedRecorder();
         stateLock = new ReentrantReadWriteLock(true);
         removed = false;
     }

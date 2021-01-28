@@ -56,9 +56,8 @@ public class UpstreamProxyManager {
      * 添加上游代理
      *
      * @param proxySocket 上游代理socket
-     * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public void add(InetSocketAddress proxySocket) throws UpStreamProxyAlreadyExistsException {
+    public UpstreamProxyDetail add(InetSocketAddress proxySocket) {
         AtomicBoolean contains = new AtomicBoolean(true);
 
         // 需要原子性操作，不能换为containsKey+put
@@ -68,8 +67,15 @@ public class UpstreamProxyManager {
         });
 
         if (contains.get()) {
-            logger.info("上游代理 {} 已存在", proxySocket);
-            throw new UpStreamProxyAlreadyExistsException(upstreamProxyDetail);
+            logger.warn("上游代理 {} 已存在", proxySocket);
+        }
+        return upstreamProxyDetail;
+    }
+
+    void sureAdd(InetSocketAddress proxySocket) {
+        UpstreamProxyDetail upstreamProxyDetail = add(proxySocket);
+        if (upstreamProxyDetail == null) {
+            logger.debug(UNEXPECTED_EXCEPTION, new UpStreamProxyAlreadyExistsException());
         }
     }
 
@@ -82,14 +88,6 @@ public class UpstreamProxyManager {
         return new HashSet<>(proxies.keySet());
     }
 
-    UpstreamProxyDetail sureGetDetail(InetSocketAddress proxySocket) {
-        UpstreamProxyDetail upstreamProxyDetail = getDetail(proxySocket);
-        if (upstreamProxyDetail == null) {
-            logger.debug(UNEXPECTED_EXCEPTION, new UpStreamProxyNotFoundException());
-        }
-        return upstreamProxyDetail;
-    }
-
     /**
      * 获取上游代理详细信息
      *
@@ -98,6 +96,14 @@ public class UpstreamProxyManager {
      */
     public UpstreamProxyDetail getDetail(InetSocketAddress proxySocket) {
         return proxies.get(proxySocket);
+    }
+
+    UpstreamProxyDetail sureGetDetail(InetSocketAddress proxySocket) {
+        UpstreamProxyDetail upstreamProxyDetail = getDetail(proxySocket);
+        if (upstreamProxyDetail == null) {
+            logger.debug(UNEXPECTED_EXCEPTION, new UpStreamProxyNotFoundException());
+        }
+        return upstreamProxyDetail;
     }
 
     /**
@@ -114,6 +120,9 @@ public class UpstreamProxyManager {
             upstreamProxyDetail.stateLock.writeLock().unlock();
             // 中止和该代理相关的所有连接
             upstreamProxyDetail.relevantConnections.forEach(switcher.connectionManager::sureAbort);
+        }
+        if (proxySocket == DIRECT_CONNECTION) {
+            sureAdd(DIRECT_CONNECTION);
         }
         return upstreamProxyDetail;
     }

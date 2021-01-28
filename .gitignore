@@ -99,6 +99,7 @@ fabric.properties
 ### Custom
 # test file
 src/main/java/MainTest.java
+src/main/resources/simplelogger.properties
 
 .gradle/
 build/

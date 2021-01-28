@@ -21,8 +21,10 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     /**
      * 通过连接数来比较两个代理的拥挤程度
      */
-    public final static Comparator<UpstreamProxyDetail> CONNECTION_COUNT =
-            Comparator.comparingInt(o -> o.relevantConnections.size());
+    public final static SwitchTactics CONNECTION_COUNT = (uri, proxyPairs) -> {
+        proxyPairs.sort(Comparator.comparingInt(o -> o.upstreamProxyDetail.relevantConnections.size()));
+        return proxyPairs;
+    };
 
     /**
      * 上游代理
@@ -36,23 +38,26 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
 
     public final Tabu tabu;
 
+    public final SpeedRecorder speedRecorder;
+
     /**
      * 选择策略
      */
-    private Comparator<UpstreamProxyDetail> switchTactics;
+    private SwitchTactics switchTactics;
 
     public Switcher() {
         this(CONNECTION_COUNT);
     }
 
-    public Switcher(Comparator<UpstreamProxyDetail> switchTactics) {
+    public Switcher(SwitchTactics switchTactics) {
         upstreamProxyManager = new UpstreamProxyManager(this);
         connectionManager = new ConnectionManager(this);
         tabu = new Tabu(this);
+        speedRecorder = new SpeedRecorder();
         setSwitchTactics(switchTactics);
     }
 
-    public void setSwitchTactics(Comparator<UpstreamProxyDetail> switchTactics) {
+    public void setSwitchTactics(SwitchTactics switchTactics) {
         this.switchTactics = switchTactics;
     }
 
@@ -85,8 +90,15 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      */
     @Override
     public void bytesReceivedFromServer(FullFlowContext flowContext, int numberOfBytes) {
-        // TODO 记录下载速度
-        logger.info("连接 {} 接收到{}字节", flowContext.getClientAddress(), numberOfBytes);
+        ConnectionDetail connectionDetail = connectionManager.sureGetDetail(flowContext.getClientAddress());
+        if (connectionDetail != null) {
+            UpstreamProxyDetail upstreamProxyDetail = upstreamProxyManager.sureGetDetail(connectionDetail.proxySocket);
+            if (upstreamProxyDetail != null) {
+                upstreamProxyDetail.speedRecorder.record(numberOfBytes);
+            }
+            connectionDetail.speedRecorder.record(numberOfBytes);
+        }
+        speedRecorder.record(numberOfBytes);
     }
 
     @Override
@@ -129,11 +141,14 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
                                      ClientDetails clientDetails) {
         if (clientDetails.getClientAddress().getAddress().isLoopbackAddress()) {
             // 为了兼容Android，不能使用流的方式
-            List<Map.Entry<InetSocketAddress, UpstreamProxyDetail>> proxyList =
-                    new ArrayList<>(upstreamProxyManager.proxies.entrySet());
-            proxyList.sort((o1, o2) -> switchTactics.compare(o1.getValue(), o2.getValue()));
+            Set<Map.Entry<InetSocketAddress, UpstreamProxyDetail>> proxySet = upstreamProxyManager.proxies.entrySet();
+            List<ProxyPair> proxyList = new ArrayList<>(proxySet.size());
+            for (Map.Entry<InetSocketAddress, UpstreamProxyDetail> entry : proxySet) {
+                proxyList.add(new ProxyPair(entry));
+            }
+            proxyList = switchTactics.getRank(httpRequest.uri(), proxyList);
             // 排序后，将代理地址按顺序加入代理链
-            proxyList.forEach(entry -> chainedProxies.add(makeChainedProxy(entry.getKey())));
+            proxyList.forEach(pair -> chainedProxies.add(makeChainedProxy(pair.proxySocket)));
         } else {
             // 来自局域网其它主机的连接，只能使用直连
             chainedProxies.add(makeChainedProxy(UpstreamProxyManager.DIRECT_CONNECTION));

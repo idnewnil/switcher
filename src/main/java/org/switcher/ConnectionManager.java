@@ -46,24 +46,14 @@ public class ConnectionManager {
         return MessageFormat.format("{0} {1} == {2} => {3} ", proxyType, clientSocket, proxySocket, uri);
     }
 
-    ConnectionDetail sureAdd(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
-        try {
-            return add(clientSocket, proxySocket, uri);
-        } catch (ConnectionAlreadySetupException e) {
-            logger.debug(UNEXPECTED_EXCEPTION, e);
-            return null;
-        }
-    }
-
     /**
      * 增加新连接
      *
      * @param clientSocket 客户端的socket
      * @param proxySocket  上游代理的socket
      * @param uri          目标uri
-     * @throws ConnectionAlreadySetupException 如果连接已存在，则会抛出该错误
      */
-    ConnectionDetail add(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) throws ConnectionAlreadySetupException {
+    void add(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
         UpstreamProxyDetail upstreamProxyDetail = switcher.upstreamProxyManager.sureGetDetail(proxySocket);
         if (upstreamProxyDetail != null) {
             // 由于upstreamProxy可能在被获取后又恰好被释放，因此需要获取状态锁
@@ -99,13 +89,11 @@ public class ConnectionManager {
             String newConnectionChain = connectionChain(clientSocket, proxySocket, uri);
             String existingConnectionChain = connectionChain(clientSocket,
                     connectionDetail.proxySocket, connectionDetail.uri);
-            logger.error("尝试增加{}到 {}，但在 {} 中，已存在{}",
-                    newConnectionChain, this, this, existingConnectionChain);
-            throw new ConnectionAlreadySetupException(connectionDetail);
+            logger.debug("尝试增加{}到 {}，但在 {} 中，已存在{}", newConnectionChain, this,
+                    this, existingConnectionChain, new ConnectionAlreadySetupException());
         } else {
             logger.info("新增{}", connectionChain(clientSocket, proxySocket, uri));
         }
-        return connectionDetail;
     }
 
     /**
@@ -117,29 +105,22 @@ public class ConnectionManager {
         return new HashSet<>(connections.keySet());
     }
 
-    ConnectionDetail sureGetDetail(InetSocketAddress clientSocket) {
-        try {
-            return getDetail(clientSocket);
-        } catch (ConnectionNotFoundException e) {
-            logger.debug(UNEXPECTED_EXCEPTION, e);
-            return null;
-        }
-    }
-
     /**
      * 获取连接详细信息
      *
      * @param clientSocket 客户端的socket
      * @return 连接的详细信息
-     * @throws ConnectionNotFoundException 如果连接不存在，则抛出该异常
      */
-    public ConnectionDetail getDetail(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
-        ConnectionDetail value = connections.get(clientSocket);
-        if (value == null) {
-            logger.debug("获取不存在连接 {} 的信息", clientSocket);
-            throw new ConnectionNotFoundException();
+    public ConnectionDetail getDetail(InetSocketAddress clientSocket) {
+        return connections.get(clientSocket);
+    }
+
+    ConnectionDetail sureGetDetail(InetSocketAddress clientSocket) {
+        ConnectionDetail connectionDetail = getDetail(clientSocket);
+        if (connectionDetail == null) {
+            logger.debug(UNEXPECTED_EXCEPTION, new ConnectionNotFoundException());
         }
-        return value;
+        return connectionDetail;
     }
 
     /**
@@ -150,29 +131,28 @@ public class ConnectionManager {
     void remove(InetSocketAddress clientSocket) {
         ConnectionDetail connectionDetail = connections.remove(clientSocket);
         if (connectionDetail == null) {
-            ConnectionNotFoundException e = new ConnectionNotFoundException();
-            logger.debug(UNEXPECTED_EXCEPTION, e);
+            logger.debug(UNEXPECTED_EXCEPTION, new ConnectionNotFoundException());
+        } else {
+            logger.info("移除连接 {}", clientSocket);
         }
-        logger.info("移除连接 {}", clientSocket);
+    }
+
+    private void abort0(InetSocketAddress clientSocket, boolean sure) {
+        logger.info("中止连接 {}", clientSocket);
+        ConnectionDetail connectionDetail = sure ? sureGetDetail(clientSocket) : getDetail(clientSocket);
+        connectionDetail.abort = true;
     }
 
     void sureAbort(InetSocketAddress clientSocket) {
-        try {
-            abort(clientSocket);
-        } catch (ConnectionNotFoundException e) {
-            logger.debug(UNEXPECTED_EXCEPTION, e);
-        }
+        abort0(clientSocket, true);
     }
 
     /**
      * 中止连接
      *
      * @param clientSocket 客户端的socket
-     * @throws ConnectionNotFoundException 如果连接不存在，抛出该异常
      */
-    public void abort(InetSocketAddress clientSocket) throws ConnectionNotFoundException {
-        logger.info("中止连接 {}", clientSocket);
-        ConnectionDetail connectionDetail = getDetail(clientSocket);
-        connectionDetail.abort = true;
+    public void abort(InetSocketAddress clientSocket) {
+        abort0(clientSocket, false);
     }
 }

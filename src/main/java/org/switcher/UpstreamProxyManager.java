@@ -48,8 +48,8 @@ public class UpstreamProxyManager {
      * @param port 端口
      * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public UpstreamProxyDetail add(String host, int port) throws UpStreamProxyAlreadyExistsException {
-        return add(new InetSocketAddress(host, port));
+    public void add(String host, int port) throws UpStreamProxyAlreadyExistsException {
+        add(new InetSocketAddress(host, port));
     }
 
     /**
@@ -58,7 +58,7 @@ public class UpstreamProxyManager {
      * @param proxySocket 上游代理socket
      * @throws UpStreamProxyAlreadyExistsException 如果上游代理已经添加则抛出该异常
      */
-    public UpstreamProxyDetail add(InetSocketAddress proxySocket) throws UpStreamProxyAlreadyExistsException {
+    public void add(InetSocketAddress proxySocket) throws UpStreamProxyAlreadyExistsException {
         AtomicBoolean contains = new AtomicBoolean(true);
 
         // 需要原子性操作，不能换为containsKey+put
@@ -71,7 +71,6 @@ public class UpstreamProxyManager {
             logger.info("上游代理 {} 已存在", proxySocket);
             throw new UpStreamProxyAlreadyExistsException(upstreamProxyDetail);
         }
-        return upstreamProxyDetail;
     }
 
     /**
@@ -84,12 +83,11 @@ public class UpstreamProxyManager {
     }
 
     UpstreamProxyDetail sureGetDetail(InetSocketAddress proxySocket) {
-        try {
-            return getDetail(proxySocket);
-        } catch (UpStreamProxyNotFoundException e) {
-            logger.debug(UNEXPECTED_EXCEPTION, e);
-            return null;
+        UpstreamProxyDetail upstreamProxyDetail = getDetail(proxySocket);
+        if (upstreamProxyDetail == null) {
+            logger.debug(UNEXPECTED_EXCEPTION, new UpStreamProxyNotFoundException());
         }
+        return upstreamProxyDetail;
     }
 
     /**
@@ -97,35 +95,26 @@ public class UpstreamProxyManager {
      *
      * @param proxySocket 上游代理socket
      * @return 对应上游代理的详细信息
-     * @throws UpStreamProxyNotFoundException 如果该socket没有被添加，则抛出该异常
      */
-    public UpstreamProxyDetail getDetail(InetSocketAddress proxySocket) throws UpStreamProxyNotFoundException {
-        UpstreamProxyDetail value = proxies.get(proxySocket);
-        if (value == null) {
-            logger.info("获取不存在上游代理 {} 的信息", proxySocket);
-            throw new UpStreamProxyNotFoundException();
-        }
-        return value;
+    public UpstreamProxyDetail getDetail(InetSocketAddress proxySocket) {
+        return proxies.get(proxySocket);
     }
 
     /**
      * 移除上游代理
      *
      * @param proxySocket 上游代理socket
-     * @throws UpStreamProxyNotFoundException 如果该socket没有被添加，则抛出该异常
      */
-    public UpstreamProxyDetail remove(InetSocketAddress proxySocket) throws UpStreamProxyNotFoundException {
+    public UpstreamProxyDetail remove(InetSocketAddress proxySocket) {
         UpstreamProxyDetail upstreamProxyDetail = proxies.remove(proxySocket);
-        if (upstreamProxyDetail == null) {
-            logger.info("移除不存在的上游代理 {} ", proxySocket);
-            throw new UpStreamProxyNotFoundException();
+        if (upstreamProxyDetail != null) {
+            // 修改状态，防止产生野连接
+            upstreamProxyDetail.stateLock.writeLock().lock();
+            upstreamProxyDetail.removed = true;
+            upstreamProxyDetail.stateLock.writeLock().unlock();
+            // 中止和该代理相关的所有连接
+            upstreamProxyDetail.relevantConnections.forEach(switcher.connectionManager::sureAbort);
         }
-        // 修改状态，防止产生野连接
-        upstreamProxyDetail.stateLock.writeLock().lock();
-        upstreamProxyDetail.removed = true;
-        upstreamProxyDetail.stateLock.writeLock().unlock();
-        // 中止和该代理相关的所有连接
-        upstreamProxyDetail.relevantConnections.forEach(switcher.connectionManager::sureAbort);
         return upstreamProxyDetail;
     }
 }

@@ -61,6 +61,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      */
     public HttpProxyServerBootstrap boostrap() {
         return DefaultHttpProxyServer.bootstrap()
+                .withPort(12234)
                 .plusActivityTracker(this)
                 .withChainProxyManager(this)
                 .withFiltersSource(new HttpFiltersSourceAdapter() {
@@ -85,6 +86,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     @Override
     public void bytesReceivedFromServer(FullFlowContext flowContext, int numberOfBytes) {
         // TODO 记录下载速度
+        logger.info("连接 {} 接收到{}字节", flowContext.getClientAddress(), numberOfBytes);
     }
 
     @Override

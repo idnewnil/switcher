@@ -21,7 +21,7 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
         } else if (result.length == 2) {
             return new InetSocketAddress(result[0], Integer.parseInt(result[1]));
         } else {
-            logger.debug("非法的socket字符串");
+            logger.debug("非法的socket字符串 {}", socketString);
             return null;
         }
     }
@@ -65,7 +65,7 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
             // 如果上游代理的socket和目标服务器的socket一致，说明是直接连接
             proxySocket = UpstreamProxyManager.DIRECT_CONNECTION;
         }
-        switcher.connectionManager.sureAdd(clientSocket, proxySocket, uri);
+        switcher.connectionManager.add(clientSocket, proxySocket, uri);
     }
 
     @Override

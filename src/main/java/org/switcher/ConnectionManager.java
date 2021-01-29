@@ -7,11 +7,10 @@ import org.switcher.exception.ConnectionNotFoundException;
 
 import java.net.InetSocketAddress;
 import java.text.MessageFormat;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
 
@@ -33,6 +32,11 @@ public class ConnectionManager {
         connections = new ConcurrentHashMap<>();
     }
 
+    public static String connectionChain(ConnectionPair connectionPair) {
+        return connectionChain(connectionPair.clientSocket, connectionPair.connectionDetail.proxySocket,
+                connectionPair.connectionDetail.uri);
+    }
+
     /**
      * 代理链
      *
@@ -41,7 +45,7 @@ public class ConnectionManager {
      * @param uri          目标uri
      * @return 格式化后的代理链
      */
-    private static String connectionChain(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
+    public static String connectionChain(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
         String proxyType = proxySocket == UpstreamProxyManager.DIRECT_CONNECTION ? "直接连接" : "代理连接";
         return MessageFormat.format("{0} {1} == {2} => {3} ", proxyType, clientSocket, proxySocket, uri);
     }
@@ -99,13 +103,24 @@ public class ConnectionManager {
         }
     }
 
+    public int size() {
+        return connections.size();
+    }
+
     /**
-     * 获取所有连接的clientSocket
+     * 获取所有连接
      *
-     * @return 所有socket的集合
+     * @return 所有连接
      */
-    public Set<InetSocketAddress> getAll() {
-        return new HashSet<>(connections.keySet());
+    public List<ConnectionPair> getAll() {
+        List<ConnectionPair> connectionPairs = new ArrayList<>(connections.size());
+        connections.forEach((clientSocket, connectionDetail) ->
+                connectionPairs.add(new ConnectionPair(clientSocket, connectionDetail)));
+        return connectionPairs;
+    }
+
+    public void forEach(BiConsumer<InetSocketAddress, ConnectionDetail> action) {
+        connections.forEach(action);
     }
 
     /**
@@ -137,6 +152,11 @@ public class ConnectionManager {
             logger.debug(UNEXPECTED_EXCEPTION, new ConnectionNotFoundException());
         } else {
             connectionDetail.speedRecorder.tearDown();
+            UpstreamProxyDetail upstreamProxyDetail = switcher.upstreamProxyManager
+                    .sureGetDetail(connectionDetail.proxySocket);
+            if (upstreamProxyDetail != null) {
+                upstreamProxyDetail.relevantConnections.remove(clientSocket);
+            }
             logger.info("移除连接 {}", clientSocket);
         }
     }
@@ -144,7 +164,9 @@ public class ConnectionManager {
     private void abort0(InetSocketAddress clientSocket, boolean sure) {
         logger.info("中止连接 {}", clientSocket);
         ConnectionDetail connectionDetail = sure ? sureGetDetail(clientSocket) : getDetail(clientSocket);
-        connectionDetail.abort = true;
+        if (connectionDetail != null) {
+            connectionDetail.abort = true;
+        }
     }
 
     void sureAbort(InetSocketAddress clientSocket) {

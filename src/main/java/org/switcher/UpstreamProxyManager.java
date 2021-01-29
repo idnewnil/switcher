@@ -6,11 +6,10 @@ import org.switcher.exception.UpStreamProxyAlreadyExistsException;
 import org.switcher.exception.UpStreamProxyNotFoundException;
 
 import java.net.InetSocketAddress;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 
 import static org.switcher.exception.SwitcherException.UNEXPECTED_EXCEPTION;
 
@@ -78,13 +77,24 @@ public class UpstreamProxyManager {
         }
     }
 
+    public int size() {
+        return proxies.size();
+    }
+
     /**
-     * 获取所有上游代理的socket
+     * 获取所有上游代理
      *
-     * @return 所有socket的集合
+     * @return 所有上游代理
      */
-    public Set<InetSocketAddress> getAll() {
-        return new HashSet<>(proxies.keySet());
+    public List<UpstreamProxyPair> getAll() {
+        List<UpstreamProxyPair> proxyPairs = new ArrayList<>();
+        proxies.forEach((proxySocket, upstreamProxyDetail) ->
+                proxyPairs.add(new UpstreamProxyPair(proxySocket, upstreamProxyDetail)));
+        return proxyPairs;
+    }
+
+    public void forEach(BiConsumer<InetSocketAddress, UpstreamProxyDetail> action) {
+        proxies.forEach(action);
     }
 
     /**

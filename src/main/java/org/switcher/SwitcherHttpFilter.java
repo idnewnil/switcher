@@ -26,7 +26,7 @@ class SwitcherHttpFilter extends HttpFiltersAdapter {
         }
     }
 
-    public SwitcherHttpFilter(Switcher switcher, HttpRequest originalRequest, ChannelHandlerContext ctx) {
+    SwitcherHttpFilter(Switcher switcher, HttpRequest originalRequest, ChannelHandlerContext ctx) {
         super(originalRequest, ctx);
         this.switcher = switcher;
     }

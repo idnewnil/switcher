@@ -24,7 +24,7 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      */
     public final static SwitchTactics CONNECTION_COUNT = (uri, proxyPairs) -> {
         proxyPairs.sort(Comparator.comparingInt(upstreamProxyPair ->
-                upstreamProxyPair.upstreamProxyDetail.relevantConnections.size()));
+                upstreamProxyPair.upstreamProxyDetail.getRelevantConnectionSize()));
         return proxyPairs;
     };
 
@@ -43,15 +43,20 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     public final SpeedRecorder speedRecorder;
 
     /**
+     * 给来自局域网其它主机的连接提供服务的socket
+     */
+    InetSocketAddress serverSocket;
+
+    /**
      * 选择策略
      */
     private SwitchTactics switchTactics;
 
-    public Switcher() {
+    Switcher() {
         this(CONNECTION_COUNT);
     }
 
-    public Switcher(SwitchTactics switchTactics) {
+    Switcher(SwitchTactics switchTactics) {
         upstreamProxyManager = new UpstreamProxyManager(this);
         connectionManager = new ConnectionManager(this);
         tabu = new Tabu(this);
@@ -60,14 +65,20 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     }
 
     public void setSwitchTactics(SwitchTactics switchTactics) {
+        if (switchTactics == null) {
+            logger.warn("非法参数switchTactics为空，将设为默认值CONNECTION_COUNT");
+            switchTactics = CONNECTION_COUNT;
+        }
         this.switchTactics = switchTactics;
+        serverSocket = UpstreamProxyManager.DIRECT_CONNECTION;
     }
 
     /**
      * @return 部分配置后的 {@link DefaultHttpProxyServer#bootstrap()}
      */
-    public HttpProxyServerBootstrap boostrap() {
+    HttpProxyServerBootstrap bootstrap() {
         return DefaultHttpProxyServer.bootstrap()
+                .withName("switcher")
                 .withPort(12234)
                 .plusActivityTracker(this)
                 .withChainProxyManager(this)
@@ -138,18 +149,15 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     public void lookupChainedProxies(HttpRequest httpRequest, Queue<ChainedProxy> chainedProxies,
                                      ClientDetails clientDetails) {
         if (clientDetails.getClientAddress().getAddress().isLoopbackAddress()) {
-            // 为了兼容Android，不能使用流的方式
-            Set<Map.Entry<InetSocketAddress, UpstreamProxyDetail>> proxySet = upstreamProxyManager.proxies.entrySet();
-            List<UpstreamProxyPair> proxyList = new ArrayList<>(proxySet.size());
-            for (Map.Entry<InetSocketAddress, UpstreamProxyDetail> entry : proxySet) {
-                proxyList.add(new UpstreamProxyPair(entry));
-            }
-            proxyList = switchTactics.getRank(httpRequest.uri(), proxyList);
-            // 排序后，将代理地址按顺序加入代理链
-            proxyList.forEach(pair -> chainedProxies.add(makeChainedProxy(pair.proxySocket)));
+            List<UpstreamProxyPair> upstreamProxyPairs = upstreamProxyManager.getAll();
+            // 为了防止短时间内大量连接创建（如IDM）时导致多个连接同时选中同一个代理，所以打乱顺序
+            Collections.shuffle(upstreamProxyPairs);
+            upstreamProxyPairs = switchTactics.getRank(httpRequest.uri(), upstreamProxyPairs);
+            // 排序后，把代理地址按顺序加入代理链
+            upstreamProxyPairs.forEach(pair -> chainedProxies.add(makeChainedProxy(pair.proxySocket)));
         } else {
-            // 来自局域网其它主机的连接，只能使用直连
-            chainedProxies.add(makeChainedProxy(UpstreamProxyManager.DIRECT_CONNECTION));
+            // 来自局域网其它主机的连接，只能使用特定的serverSocket
+            chainedProxies.add(makeChainedProxy(serverSocket));
         }
     }
 }

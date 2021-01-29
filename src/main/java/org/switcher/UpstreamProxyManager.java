@@ -62,7 +62,7 @@ public class UpstreamProxyManager {
         // 需要原子性操作，不能换为containsKey+put
         UpstreamProxyDetail upstreamProxyDetail = proxies.computeIfAbsent(proxySocket, __ -> {
             contains.set(false);
-            return new UpstreamProxyDetail();
+            return new UpstreamProxyDetail(switcher.speedRecorder);
         });
 
         if (contains.get()) {

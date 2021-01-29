@@ -23,7 +23,8 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
      * 通过连接数来比较两个代理的拥挤程度
      */
     public final static SwitchTactics CONNECTION_COUNT = (uri, proxyPairs) -> {
-        proxyPairs.sort(Comparator.comparingInt(o -> o.upstreamProxyDetail.relevantConnections.size()));
+        proxyPairs.sort(Comparator.comparingInt(upstreamProxyPair ->
+                upstreamProxyPair.upstreamProxyDetail.relevantConnections.size()));
         return proxyPairs;
     };
 
@@ -94,13 +95,8 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
     public void bytesReceivedFromServer(FullFlowContext flowContext, int numberOfBytes) {
         ConnectionDetail connectionDetail = connectionManager.sureGetDetail(flowContext.getClientAddress());
         if (connectionDetail != null) {
-            UpstreamProxyDetail upstreamProxyDetail = upstreamProxyManager.sureGetDetail(connectionDetail.proxySocket);
-            if (upstreamProxyDetail != null) {
-                upstreamProxyDetail.speedRecorder.record(numberOfBytes);
-            }
             connectionDetail.speedRecorder.record(numberOfBytes);
         }
-        speedRecorder.record(numberOfBytes);
     }
 
     @Override
@@ -144,9 +140,9 @@ public class Switcher extends ActivityTrackerAdapter implements ChainedProxyMana
         if (clientDetails.getClientAddress().getAddress().isLoopbackAddress()) {
             // 为了兼容Android，不能使用流的方式
             Set<Map.Entry<InetSocketAddress, UpstreamProxyDetail>> proxySet = upstreamProxyManager.proxies.entrySet();
-            List<ProxyPair> proxyList = new ArrayList<>(proxySet.size());
+            List<UpstreamProxyPair> proxyList = new ArrayList<>(proxySet.size());
             for (Map.Entry<InetSocketAddress, UpstreamProxyDetail> entry : proxySet) {
-                proxyList.add(new ProxyPair(entry));
+                proxyList.add(new UpstreamProxyPair(entry));
             }
             proxyList = switchTactics.getRank(httpRequest.uri(), proxyList);
             // 排序后，将代理地址按顺序加入代理链

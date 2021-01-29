@@ -1,107 +1,119 @@
 package org.switcher;
 
-import java.util.ArrayList;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class SpeedRecorder {
-    public final static int NANO = 1000000000;
+    private final static Logger logger = LoggerFactory.getLogger(SpeedRecorder.class);
+    public final static int DEFAULT_SIZE = 3;
 
     /**
-     * 用于分阶段的记录速度
+     * 记录最近n秒的速度
      */
-    private AtomicReferenceArray<SpeedRecord> periodSpeedRecords;
+    private final AtomicReference<SpeedUnsafeRecorder> speedRecordsReference;
+
+    /**
+     * 父recorder，自身的操作会影响到父节点
+     */
+    final SpeedRecorder parent;
 
     SpeedRecorder() {
-        this(100);
+        this(DEFAULT_SIZE);
     }
 
-    SpeedRecorder(int numberOfPeriods) {
-        setPeriodCount(numberOfPeriods);
-
+    SpeedRecorder(int size) {
+        this(size, null);
     }
 
-    public int getNumberOfPeriods() {
-        return periodSpeedRecords.length();
+    SpeedRecorder(SpeedRecorder parent) {
+        this(DEFAULT_SIZE, parent);
     }
 
-    public void setPeriodCount(int numberOfPeriods) {
-        if (numberOfPeriods <= 0) {
-            numberOfPeriods = 1;
+    SpeedRecorder(int size, SpeedRecorder parent) {
+        speedRecordsReference = new AtomicReference<>();
+        setSize(size);
+        this.parent = parent;
+    }
+
+    public int getSize() {
+        return speedRecordsReference.get().speedRecords.size();
+    }
+
+    public void setSize(int size) {
+        // 限制size为正整数
+        if (size <= 0) {
+            logger.warn("非法参数size={}，将修改为默认值{}", size, DEFAULT_SIZE);
+            size = DEFAULT_SIZE;
         }
-        if (this.periodSpeedRecords == null || periodSpeedRecords.length() != numberOfPeriods) {
-            periodSpeedRecords = new AtomicReferenceArray<>(numberOfPeriods);
-            for (int i = 0; i < periodSpeedRecords.length(); i++) {
-                periodSpeedRecords.set(i, new SpeedRecord(-1, 0));
-            }
-        }
+        speedRecordsReference.set(new SpeedUnsafeRecorder(size));
     }
 
-    /**
-     * 记录上传/下载流量
-     * 不要使用this.periodSpeedRecords，因为setPeriodCount可能会使其发生变化
-     *
-     * @param numberOfBytes 字节数
-     */
     public void record(int numberOfBytes) {
-        Holder holder = new Holder(false);
-        holder.concurrentPeriodSpeedRecords.updateAndGet(holder.pos, speedRecord -> {
-            if (holder.timestamp > speedRecord.timestamp) {
-                // 如果目前的时间比当前speedRecord的时间要大，那么需要更新speedRecord的值
-                return new SpeedRecord(holder.timestamp, numberOfBytes);
-            } else if (holder.timestamp == speedRecord.timestamp) {
-                // 如果时间相同，那么直接增加到speedRecord中
-                speedRecord.value += numberOfBytes;
-                return speedRecord;
-            } else {
-                // 否则当前时间比speedRecord的时间要小，不做处理
-                return speedRecord;
+        speedRecordsReference.updateAndGet(speedUnsafeRecorder -> {
+            speedUnsafeRecorder.record(numberOfBytes);
+            // 同时更新parent
+            if (parent != null && !speedUnsafeRecorder.stopped) {
+                parent.record(numberOfBytes);
             }
+            return speedUnsafeRecorder;
         });
     }
 
-    /**
-     * 获取速度
-     * 不要使用this.periodSpeedRecords，因为setPeriodCount可能会使其发生变化
-     */
     public long getSpeed() {
-        Holder holder = new Holder(true);
-        long totalValue = 0;
-        for (int i = 0; i < holder.periodSpeedRecords.size(); i++) {
-            int delta = i <= holder.pos ? 0 : 1;
-            SpeedRecord speedRecord = holder.periodSpeedRecords.get(i);
-            if (holder.timestamp - speedRecord.timestamp == delta) {
-                // 对于每一个位置i<=holder.pos，如果holder.timestamp==speedRecord.timestamp，说明这个位置的记录是最新的
-                // 同样对于每一个i>holder.pos且holder.timestamp-speedRecord.timestamp==1的位置，这个记录也是最新的
-                totalValue += speedRecord.value;
-            }
-        }
-        return totalValue;
+        // 使用AtomicLong是为了能在updateAndGet设置speed的值，也可用new long[1]代替
+        AtomicLong speed = new AtomicLong();
+        speedRecordsReference.updateAndGet(speedUnsafeRecorder -> {
+            speed.set(speedUnsafeRecorder.getSpeed());
+            return speedUnsafeRecorder;
+        });
+        return speed.get();
     }
 
-
-    private class Holder {
-        private final AtomicReferenceArray<SpeedRecord> concurrentPeriodSpeedRecords;
-        private final List<SpeedRecord> periodSpeedRecords;
-        private final long timestamp;
-        private final int pos;
-
-        private Holder(boolean freeze) {
-            // 保证periodSpeedRecords的一致性
-            concurrentPeriodSpeedRecords = SpeedRecorder.this.periodSpeedRecords;
-            int numberOfPeriods = concurrentPeriodSpeedRecords.length();
-            if (freeze) {
-                periodSpeedRecords = new ArrayList<>(numberOfPeriods);
-                for (int i = 0; i < numberOfPeriods; i++) {
-                    periodSpeedRecords.add(concurrentPeriodSpeedRecords.get(i).clone());
-                }
-            } else {
-                periodSpeedRecords = null;
-            }
-            long nano = System.nanoTime();
-            int periodLong = (NANO + numberOfPeriods - 1) / numberOfPeriods;
-            timestamp = nano / NANO;
-            pos = (int) (nano % NANO / periodLong);
+    // 停止这个计速器
+    void tearDown() {
+        if (parent != null) {
+            speedRecordsReference.updateAndGet(speedUnsafeRecorder -> {
+                speedUnsafeRecorder.stopped = true;
+                parent.reduce(speedUnsafeRecorder);
+                return speedUnsafeRecorder;
+            });
         }
+    }
+
+    /**
+     * {@link SpeedUnsafeRecorder#get(int)}
+     *
+     * @param toReduce 每个对应时间需要减少的值
+     */
+    void reduce(SpeedUnsafeRecorder toReduce) {
+        speedRecordsReference.updateAndGet(speedUnsafeRecorder -> {
+            // 用speedUnsafeRecorder.get(int)方法顺序获取的speedRecorder的timestamp也是顺序的
+            List<SpeedRecord> iSpeedRecords = speedUnsafeRecorder.speedRecords;
+            List<SpeedRecord> jSpeedRecords = toReduce.speedRecords;
+            for (int i = 0, j = 0; i < iSpeedRecords.size() && j < jSpeedRecords.size(); ) {
+                SpeedRecord iSpeedRecord = iSpeedRecords.get(i);
+                SpeedRecord jSpeedRecord = jSpeedRecords.get(j);
+                if (iSpeedRecord.timestamp < jSpeedRecord.timestamp) {
+                    ++i;
+                } else if (iSpeedRecord.timestamp > jSpeedRecord.timestamp) {
+                    ++j;
+                } else {
+                    // 如果iSpeedRecord.timestamp==jSpeedRecord.timestamp
+                    // 那么需要减去对应值
+                    iSpeedRecord.value -= jSpeedRecord.value;
+                    ++i;
+                    ++j;
+                }
+            }
+            // 同时更新parent
+            if (parent != null) {
+                parent.reduce(toReduce);
+            }
+            return speedUnsafeRecorder;
+        });
     }
 }

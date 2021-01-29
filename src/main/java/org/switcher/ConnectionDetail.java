@@ -27,10 +27,10 @@ public class ConnectionDetail {
      * @param proxySocket 上游代理的地址
      * @param uri         目标uri
      */
-    ConnectionDetail(InetSocketAddress proxySocket, String uri) {
+    ConnectionDetail(InetSocketAddress proxySocket, String uri, SpeedRecorder parent) {
         this.proxySocket = proxySocket;
         this.uri = uri;
-        speedRecorder = new SpeedRecorder();
+        speedRecorder = new SpeedRecorder(parent);
         abort = false;
     }
 

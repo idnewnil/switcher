@@ -27,9 +27,9 @@ public class UpstreamProxyDetail {
      */
     boolean removed;
 
-    UpstreamProxyDetail() {
+    UpstreamProxyDetail(SpeedRecorder parent) {
         relevantConnections = new HashSet<>();
-        speedRecorder = new SpeedRecorder();
+        speedRecorder = new SpeedRecorder(parent);
         stateLock = new ReentrantReadWriteLock(true);
         removed = false;
     }

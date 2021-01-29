@@ -10,5 +10,5 @@ public interface SwitchTactics {
      * @param proxyPairs 可使用的代理
      * @return 排序后的代理
      */
-    List<ProxyPair> getRank(String uri, List<ProxyPair> proxyPairs);
+    List<UpstreamProxyPair> getRank(String uri, List<UpstreamProxyPair> proxyPairs);
 }

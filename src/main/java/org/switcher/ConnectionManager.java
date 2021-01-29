@@ -55,10 +55,13 @@ public class ConnectionManager {
      */
     void add(InetSocketAddress clientSocket, InetSocketAddress proxySocket, String uri) {
         UpstreamProxyDetail upstreamProxyDetail = switcher.upstreamProxyManager.sureGetDetail(proxySocket);
+        SpeedRecorder parent = null;
         if (upstreamProxyDetail != null) {
             // 由于upstreamProxy可能在被获取后又恰好被释放，因此需要获取状态锁
             upstreamProxyDetail.stateLock.readLock().lock();
+            parent = upstreamProxyDetail.speedRecorder;
         }
+        SpeedRecorder finalParent = parent;
 
         // 用AtomicBoolean并不是为了原子性，可以用new boolean[]{true}来代替
         AtomicBoolean contains = new AtomicBoolean(true);
@@ -67,7 +70,7 @@ public class ConnectionManager {
         ConnectionDetail connectionDetail = connections.computeIfAbsent(clientSocket, __ -> {
             // 此处如果修改boolean则会报错，所以才需要用引用的方式
             contains.set(false);
-            return new ConnectionDetail(proxySocket, uri);
+            return new ConnectionDetail(proxySocket, uri, finalParent);
         });
 
         if (upstreamProxyDetail != null) {
@@ -133,6 +136,7 @@ public class ConnectionManager {
         if (connectionDetail == null) {
             logger.debug(UNEXPECTED_EXCEPTION, new ConnectionNotFoundException());
         } else {
+            connectionDetail.speedRecorder.tearDown();
             logger.info("移除连接 {}", clientSocket);
         }
     }

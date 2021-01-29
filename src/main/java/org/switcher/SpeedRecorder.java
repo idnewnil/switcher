@@ -3,13 +3,15 @@ package org.switcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.text.MessageFormat;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SpeedRecorder {
     private final static Logger logger = LoggerFactory.getLogger(SpeedRecorder.class);
-    public final static int DEFAULT_SIZE = 3;
+    public final static int DEFAULT_SIZE = 5;
+    private final static String[] UNIT = new String[]{"B", "KB", "MB", "GB", "TB"};
 
     /**
      * 记录最近n秒的速度
@@ -20,6 +22,24 @@ public class SpeedRecorder {
      * 父recorder，自身的操作会影响到父节点
      */
     final SpeedRecorder parent;
+
+    public static String prettySpeed(long speed) {
+        int unit = 0;
+        long remainder = 0;
+        while (speed > 1024 && unit < UNIT.length - 1) {
+            remainder = speed & 1023;
+            speed >>= 10;
+            ++unit;
+        }
+        if (unit <= 1) {
+            // B或者KB为单位，不用小数
+            return MessageFormat.format("{0}{1}/s", speed, UNIT[unit]);
+        } else {
+            // MB或以上的单位，输出小数后一位
+            return MessageFormat.format("{0}.{1}{2}/s",
+                    speed, remainder * 10 >> 10, UNIT[unit]);
+        }
+    }
 
     SpeedRecorder() {
         this(DEFAULT_SIZE);
@@ -44,9 +64,9 @@ public class SpeedRecorder {
     }
 
     public void setSize(int size) {
-        // 限制size为正整数
-        if (size <= 0) {
-            logger.warn("非法参数size={}，将修改为默认值{}", size, DEFAULT_SIZE);
+        // 限制size至少为2
+        if (size <= 1) {
+            logger.warn("非法参数size={}(<=1)，将修改为默认值{}", size, DEFAULT_SIZE);
             size = DEFAULT_SIZE;
         }
         speedRecordsReference.set(new SpeedUnsafeRecorder(size));
@@ -71,6 +91,10 @@ public class SpeedRecorder {
             return speedUnsafeRecorder;
         });
         return speed.get();
+    }
+
+    public String getPrettySpeed() {
+        return prettySpeed(getSpeed());
     }
 
     // 停止这个计速器
